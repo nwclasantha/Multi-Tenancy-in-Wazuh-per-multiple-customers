@@ -24,6 +24,8 @@ The objectives of this multi-tenant setup include:
 
 ### Configuration Steps
 
+![S1yYUtASvTuD8MGbRdRe5B](https://github.com/user-attachments/assets/41cd31d9-2ff8-4c48-a276-f961a045a313)
+
 #### Step 1: Set up Customer-Specific Roles in Kibana
 To limit each customer’s access, configure roles in Kibana that restrict data visibility to specific dashboards and index patterns.
 
