@@ -1,6 +1,9 @@
 ## Multi-Tenancy in Wazuh: Enabling Customer-Specific Access to Dashboards and Resources
 
 ### Introduction
+
+![image](https://github.com/user-attachments/assets/6d6a324b-96f5-40b4-a117-e50ceafd1248)
+
 Organizations often use Wazuh as a centralized security monitoring platform to manage multiple clients or departments. However, when multiple customers share the same platform, strict data and dashboard segregation is essential to maintain privacy and security. This guide provides a step-by-step approach to configuring Wazuh, Kibana, and Elasticsearch for multi-tenant access. By creating customer-specific roles, dashboards, and implementing Single Sign-On (SSO), each customer can securely view only their relevant resources. This setup ensures isolated access, allowing a scalable and secure shared platform.
 
 ---
