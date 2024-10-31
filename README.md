@@ -25,25 +25,125 @@ The objectives of this multi-tenant setup include:
 
 ---
 
-### Configuration Steps
+The detailed, step-by-step guide to setting up Wazuh with WSO2 Identity Server (WSO2 IS) as the SAML-based SSO provider. This setup includes role-based access to ensure each customer only views their respective resources and dashboards.
 
-![S1yYUtASvTuD8MGbRdRe5B](https://github.com/user-attachments/assets/41cd31d9-2ff8-4c48-a276-f961a045a313)
+---
 
-#### Step 1: Set up Customer-Specific Roles in Kibana
-To limit each customer’s access, configure roles in Kibana that restrict data visibility to specific dashboards and index patterns.
+### Prerequisites
 
-1. **Access Role Management**:
-   - Log in to Kibana as an administrator.
-   - Navigate to **Management > Security > Roles**.
+1. **Wazuh Stack**: Installed and running (Wazuh Manager, Elasticsearch, Kibana).
+2. **WSO2 Identity Server**: Installed, configured, and accessible over HTTPS.
+3. **Open Distro Security Plugin for Elasticsearch**: Ensures SAML authentication is supported in Elasticsearch.
+4. **SSL Certificates**: HTTPS is required for secure communication in WSO2 IS, Kibana, and Elasticsearch.
 
-2. **Create a Role for Each Customer**:
-   - Click **Create Role** and name it (e.g., `customer_A_role`).
-   - Under **Indices**, enter the specific index pattern for that customer (e.g., `wazuh-customer_A-*`) and set **Privileges** to **read**.
-   - In **Kibana** permissions, restrict access to the customer’s specific dashboard (e.g., `dashboard_customer_A`).
-   - Save the role.
+---
 
-3. **Automate Role Creation (Optional)**:
-   For multiple customers, use the following API request to streamline role creation:
+### Step 1: Configure WSO2 Identity Server for SAML SSO
+
+#### 1.1 Access WSO2 Identity Server (WSO2 IS)
+1. Open the WSO2 IS management console by going to `https://<WSO2_SERVER>:9443/carbon` in your browser.
+2. Log in with the WSO2 administrator credentials.
+
+#### 1.2 Register Wazuh as a Service Provider (SP) in WSO2 IS
+1. In the WSO2 IS management console, navigate to **Main > Identity > Service Providers**.
+2. Click **Add** to create a new Service Provider.
+3. Enter a unique name for the Service Provider, e.g., `Kibana_Wazuh_SP`.
+4. Click **Register** to save the initial setup.
+
+#### 1.3 Configure SAML2 Web SSO for the Service Provider
+1. Under the newly created Service Provider, go to **Inbound Authentication Configuration** and click **SAML2 Web SSO Configuration > Configure**.
+2. Set the following fields:
+   - **Issuer**: Set to `https://kibana.example.com`, matching the SP entity ID in Kibana’s configuration.
+   - **Assertion Consumer URL (ACS)**: Enter `https://kibana.example.com/api/security/v1/saml`.
+   - **Enable Response Signing**: Check this box to ensure the SAML responses are signed for security.
+   - **NameID Format**: Set to `urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified`.
+
+#### 1.4 Configure Attribute Mapping
+1. Scroll down to **Attribute Profile** and check **Include Attributes in the Response Always**.
+2. Add the following attributes to map roles and email:
+   - **Roles**: Map this to `http://wso2.org/claims/role` to use WSO2 IS roles for user access.
+   - **Email**: Map this to `http://wso2.org/claims/emailaddress` to identify users uniquely in Wazuh and Kibana.
+
+#### 1.5 Save and Export IdP Metadata
+1. Click **Update** to save the SAML configuration for this Service Provider.
+2. Go to **View Metadata** and download the IdP metadata XML file. Save this file to use in Elasticsearch configuration.
+
+---
+
+### Step 2: Configure Wazuh’s Elasticsearch for SAML with WSO2 IS
+
+#### 2.1 Place the IdP Metadata File on the Elasticsearch Server
+1. Copy the WSO2 IdP metadata XML file to a location accessible by Elasticsearch, such as `/etc/elasticsearch/wso2_idp_metadata.xml`.
+
+#### 2.2 Edit Elasticsearch Configuration (`elasticsearch.yml`)
+1. Open `elasticsearch.yml` in the Elasticsearch configuration directory (`/etc/elasticsearch`).
+2. Add the following settings to configure WSO2 IS as the SAML IdP:
+
+   ```yaml
+   opendistro_security.authc.realms.saml1:
+     type: saml
+     order: 1
+     idp.metadata_file: "/etc/elasticsearch/wso2_idp_metadata.xml"  # Path to the WSO2 IS metadata file
+     idp.entity_id: "https://<WSO2_SERVER>:9443/samlsso"  # Replace with your WSO2 IS server's SAML endpoint
+     sp.entity_id: "https://kibana.example.com"  # Must match the SP entity ID in WSO2 configuration
+     sp.acs: "https://kibana.example.com/api/security/v1/saml"  # Kibana's ACS URL
+     kibana_url: "https://kibana.example.com"  # Base URL of Kibana
+     roles_key: "http://wso2.org/claims/role"  # Role attribute key from WSO2 IS
+     subject_key: "http://wso2.org/claims/emailaddress"  # Email attribute key for user identification
+     idp.use_signing: true
+   ```
+
+   Ensure all paths, URLs, and attribute keys match the settings configured in WSO2 IS.
+
+#### 2.3 Restart Elasticsearch
+Restart the Elasticsearch service to apply the configuration changes:
+
+```bash
+sudo systemctl restart elasticsearch
+```
+
+---
+
+### Step 3: Configure Kibana for SAML Authentication
+
+#### 3.1 Edit `kibana.yml` for SAML Authentication
+1. Open `kibana.yml`, typically located in `/etc/kibana`.
+2. Add the following configuration for SAML support:
+
+   ```yaml
+   server.xsrf.whitelist: ["/api/security/v1/saml"]
+   opendistro_security.auth.type: "saml"
+   opendistro_security.cookie.secure: true
+   ```
+
+3. **Set Public Base URL**:
+   Ensure `server.publicBaseUrl` is set to `https://kibana.example.com`, which should match the `sp.entity_id` in WSO2 IS.
+
+#### 3.2 Restart Kibana
+Restart the Kibana service to load the new SAML settings:
+
+```bash
+sudo systemctl restart kibana
+```
+
+---
+
+### Step 4: Configure Role-Based Access Control (RBAC) in Kibana
+
+#### 4.1 Create Customer-Specific Roles in Kibana
+
+1. **Log in to Kibana as an Administrator**:
+   - Navigate to **Management > Security > Roles** in Kibana.
+
+2. **Define Roles for Each Customer**:
+   - For each customer, create a role (e.g., `customer_A_role`) and set the following:
+     - **Indices**: Specify the customer-specific index pattern, like `wazuh-customer_A-*`.
+     - **Privileges**: Grant **read** permissions to view data.
+     - **Kibana**: Restrict access to the specific customer dashboard (e.g., `dashboard_customer_A`).
+
+3. **Automate Role Creation via API (Optional)**:
+   If managing multiple customers, use the following API to create roles programmatically:
+
    ```json
    PUT /_security/role/customer_A_role
    {
@@ -63,116 +163,54 @@ To limit each customer’s access, configure roles in Kibana that restrict data 
    }
    ```
 
-#### Step 2: Create Customer-Specific User Accounts in Kibana
-Each customer should have a unique user account assigned to their corresponding role.
+#### 4.2 Map WSO2 IS Roles to Kibana Roles
+Use Elasticsearch API to map WSO2 IS roles to the appropriate Kibana roles.
 
-1. **Navigate to User Management**:
-   - In Kibana, go to **Management > Security > Users**.
+1. **Define Role Mapping via API**:
+   - In Kibana Dev Tools or directly in Elasticsearch, create role mappings:
 
-2. **Create User Accounts**:
-   - Click **Create User**.
-   - Enter a username, password, and assign the customer-specific role created above (e.g., `customer_A_role`).
-   - Save the user.
-   
-3. **Example API for User Creation**:
    ```json
-   POST /_security/user/customer_A_user
+   PUT /_security/role_mapping/customer_A_role_mapping
    {
-     "password" : "customerA_password",
-     "roles" : [ "customer_A_role" ],
-     "full_name" : "Customer A User",
-     "email" : "customerA@example.com"
+     "roles": [ "customer_A_role" ],
+     "rules": {
+       "field": { "roles": "customer_A_role" }
+     },
+     "enabled": true
    }
    ```
 
-#### Step 3: Create Customer-Specific Dashboards in Kibana
-To ensure customers only see their own data, create dashboards with filters applied to their specific index patterns.
+---
 
-1. **Create and Duplicate Dashboards**:
-   - In Kibana, go to **Dashboard** and create a base dashboard template.
-   - Save this dashboard as `Base Dashboard`.
-   - Duplicate it for each customer by clicking **Save As** and naming it according to the customer (e.g., `Customer A Dashboard`).
+### Step 5: Create Customer-Specific Dashboards in Kibana
 
-2. **Apply Customer-Specific Filters**:
-   - Open each customer’s dashboard and add a filter to restrict data to the respective customer’s index pattern (e.g., `wazuh-customer_A-*`).
-   - Save the dashboard.
+#### 5.1 Create a Base Dashboard Template
+1. In **Kibana > Dashboard > Create Dashboard**, create a base dashboard template with common visualizations.
+2. Save this dashboard as `Base Dashboard`.
 
-3. **Assign Dashboards to Roles**:
-   - In **Management > Security > Roles**, assign each customer’s role to their specific dashboard.
+#### 5.2 Duplicate and Customize Dashboards for Each Customer
+1. Open `Base Dashboard` and save it as a new dashboard for each customer, e.g., `Customer A Dashboard`.
+2. Add a **filter** to restrict data visibility to each customer’s index pattern (e.g., `wazuh-customer_A-*`).
+3. Save the customized dashboard.
 
-#### Step 4: Configure Elasticsearch for Data Segmentation
-Using customer-specific index patterns in Elasticsearch allows data isolation at the index level.
+#### 5.3 Assign Dashboards to Roles
+1. Go to **Management > Security > Roles**.
+2. For each customer’s role (e.g., `customer_A_role`), assign their specific dashboard (e.g., `Customer A Dashboard`).
 
-1. **Define Index Patterns in Kibana**:
-   - Go to **Management > Index Patterns**.
-   - Create index patterns for each customer, such as `wazuh-customer_A-*`.
+---
 
-2. **Automate Index Creation (Optional)**:
-   To handle multiple customers, use a shell script:
-   ```bash
-   customers=("customer_A" "customer_B")
-   for customer in "${customers[@]}"; do
-     curl -X POST "http://localhost:5601/api/saved_objects/index-pattern/${customer}_pattern" \
-          -H "kbn-xsrf: true" \
-          -H "Content-Type: application/json" \
-          -d "{\"attributes\": {\"title\": \"wazuh-${customer}-*\", \"timeFieldName\": \"@timestamp\"}}"
-   done
-   ```
+### Step 6: Test SAML SSO and Customer-Specific Access
 
-#### Step 5: Configure Wazuh Agents for Data Tagging
-Tags added to each agent’s configuration help filter and route data to the appropriate indices.
+#### 6.1 Log into Kibana via WSO2 SSO
+1. Open Kibana (`https://kibana.example.com`). This should redirect you to the WSO2 IS login page.
+2. Log in with a WSO2 IS user who has the appropriate role assigned.
 
-1. **Edit the Wazuh Agent Configuration**:
-   - Open `ossec.conf` on each customer’s agent.
-   - Add a tag for data segregation:
-   ```xml
-   <agent_config>
-     <tag>customer_A</tag>
-   </agent_config>
-   ```
+#### 6.2 Verify Access Control
+1. After logging in, confirm that each user can only access their assigned dashboard and data.
+2. Verify that no cross-customer access is possible and data isolation is in effect.
 
-2. **Logstash Configuration for Data Routing**:
-   If using Logstash, set up filters based on tags:
-   ```ruby
-   filter {
-     if "customer_A" in [tags] {
-       mutate { add_field => { "[@metadata][target_index]" => "wazuh-customer_A-%{+YYYY.MM.dd}" } }
-     }
-   }
-
-   output {
-     elasticsearch {
-       hosts => ["http://localhost:9200"]
-       index => "%{[@metadata][target_index]}"
-     }
-   }
-   ```
-
-#### Step 6: Implement SAML-based SSO for Secure Login
-Integrating SAML-based SSO simplifies user access and management across multiple customers.
-
-1. **Configure `elasticsearch.yml` for SAML**:
-   ```yaml
-   opendistro_security.authc.realms.saml1:
-     type: saml
-     order: 1
-     idp.metadata_file: "https://idp.example.com/metadata"
-     idp.entity_id: "https://idp.example.com/"
-     sp.entity_id: "https://kibana.example.com"
-     kibana_url: "https://kibana.example.com"
-     sp.acs: "https://kibana.example.com/api/security/v1/saml"
-     roles_key: "roles"
-   ```
-
-2. **Configure SAML in `kibana.yml`**:
-   ```yaml
-   server.xsrf.whitelist: ["/api/security/v1/saml"]
-   opendistro_security.auth.type: "saml"
-   opendistro_security.cookie.secure: true
-   ```
-
-3. **IdP Configuration**:
-   - Set up SAML in your IdP (e.g., Okta, Azure AD), specifying Kibana’s URL (`https://kibana.example.com`) and ACS endpoint (`https://kibana.example.com/api/security/v1/saml`).
+#### 6.3 Check Elasticsearch and Kibana Logs
+1. Review the Elasticsearch and Kibana logs to ensure there are no authentication or access errors.
 
 ---
 
